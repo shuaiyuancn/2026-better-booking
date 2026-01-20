@@ -1,7 +1,7 @@
 services:
   web:
     build: .
-    container_name: myapp_dev
+    container_name: better_booking_web
     ports:
       - "5001:5001"
     volumes:
@@ -9,15 +9,34 @@ services:
       - /app/.venv
     environment:
       - UV_PROJECT_ENVIRONMENT=/app/.venv
-      # DB Connection: Uses .env value if set, otherwise defaults to local DB container
+      # DB Connection: Uses env var if set (Railway), else default internal
       - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/postgres}
+    env_file:
+      - .env
     depends_on:
       - db
     command: sh -c "uv sync && uv run python main.py"
 
+  worker:
+    build: .
+    container_name: better_booking_worker
+    volumes:
+      - .:/app
+      - /app/.venv
+    environment:
+      - UV_PROJECT_ENVIRONMENT=/app/.venv
+      # DB Connection: Uses env var if set (Railway), else default internal
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/postgres}
+      - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    env_file:
+      - .env
+    depends_on:
+      - db
+    command: sh -c "uv sync && uv run python bot.py"
+
   db:
     image: postgres:latest
-    container_name: myapp_db
+    container_name: better_booking_db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
