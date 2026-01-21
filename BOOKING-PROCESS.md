@@ -12,30 +12,27 @@ This document outlines the step-by-step process for automating bookings on `book
     *   Available slots appear as links (e.g., "Ad Hoc session...").
     *   Example Selector: `a[href*="/slot/"]`.
     *   **Time Matching:** The link text or href contains the start/end time (e.g., `07:00-07:40`).
-*   **Action:** Click the slot element.
 
-## 2. Slot Selection (Modal)
-*   **State:** A modal or overlay appears with "Your selection".
-*   **Court Selection:**
-    *   Check if "Book now" button is disabled.
-    *   Check if text "The session being booked is already full" is visible.
-    *   **If Full/Disabled:**
-        *   Locate the "Select location" combobox (it's a custom div/input, not a `<select>`).
-        *   **Action:** Click the **text label** of the current selection (e.g., "FULL - Court 1") or the dropdown arrow to open the list.
-        *   **Select:** Click a different option (e.g., "Court 2") from the `listbox` that appears.
-        *   Verify "Book now" becomes enabled.
+## 2. Authentication (Pre-emptive)
+**Goal:** Log in *before* interacting with the slot modal to avoid state resets.
+*   **Trigger:** Click the "Log in" button on the main page header (`button:has-text("Log in")`).
 *   **Action:**
-    *   Click "Book now" (`button:has-text("Book now")`).
+    *   Fill Email/ID and Password in the login modal/page.
+    *   Click "Log in".
+*   **Validation:** Verify the "Log in" button is replaced by "My account" or similar, or simply proceed to booking.
 
-## 3. Authentication (If not logged in)
-*   **Redirect:** System shows a login form.
-*   **Form Fields:**
-    *   Email/ID: `input[type="text"]` (Label: "Email address or customer ID").
-    *   Password: `input[type="password"]` (Label: "Password").
-*   **Action:** Fill credentials and click "Log in".
-*   **Post-Login:** System returns to the "Your selection" modal.
-*   **Re-Verification:** Ensure the correct court is still selected (state might reset to default). Re-select if necessary.
-*   **Action:** Click "Book now" again.
+## 3. Slot Selection & Booking
+*   **Action:** Click the target slot element.
+*   **Modal State:** "Your selection" modal appears.
+*   **Court Selection:**
+    *   Check if "Book now" button is disabled or text "The session being booked is already full" is visible.
+    *   **If Full/Disabled:**
+        *   Locate the "Select location" combobox.
+        *   **Action:** Click the **text label** of the current selection (e.g., "FULL - Court 1") to open the list.
+        *   **Select:** Click a different option (e.g., "Court 2") from the `listbox`.
+        *   Verify "Book now" becomes enabled.
+*   **Final Action:** Click "Book now" (`button:has-text("Book now")`).
+    *   Since we are logged in, this should redirect directly to the Checkout/Basket.
 
 ## 4. Checkout Process (`/basket/checkout`)
 *   **State:** Checkout page with "Billing Details" and "Payment Method".

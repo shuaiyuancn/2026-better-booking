@@ -51,12 +51,12 @@ This document defines the operational context and workflow for this project. It 
 
 ### B. Running the App
 *   **Start:** `podman-compose up -d`
-*   **Logs:** `podman logs -f palpay_dev`
+*   **Logs:** `podman logs -f myapp_dev`
 *   **Access:** Open `http://localhost:5001`.
 
 ### C. Testing
 *   Tests must run **inside** the Linux container.
-*   **Command:** `podman exec palpay_dev uv run pytest`
+*   **Command:** `podman exec myapp_dev uv run pytest`
 
 ## 5. Deployment Checklist (Vercel)
 

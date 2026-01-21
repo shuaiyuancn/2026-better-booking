@@ -33,7 +33,6 @@ class BookingBot:
             return
 
         # 2. Construct URL
-        # Format: .../badminton-{duration}/{YYYY-MM-DD}/by-time
         duration_slug = f"badminton-{task.duration}min"
         url = f"https://bookings.better.org.uk/location/{task.leisure_centre}/{duration_slug}/{task.target_date}/by-time"
         
@@ -59,7 +58,29 @@ class BookingBot:
                     self.update_task_last_checked(task)
                     return 
 
-                # Find Slots
+                # 4. Pre-emptive Login
+                # Check for main "Log in" button (header)
+                # Use test_id to avoid matching other login buttons (e.g. empty basket)
+                login_btn = page.get_by_test_id("login")
+                if login_btn.is_visible():
+                    self.log(LogLevel.INFO, "Performing pre-emptive login...", task.id)
+                    try:
+                        login_btn.click()
+                        # Wait for login form
+                        page.wait_for_selector("input[id='password']", timeout=10000)
+                        
+                        page.get_by_label("Email address or customer ID").fill(user.email)
+                        pwd = decrypt_value(user.password_encrypted)
+                        page.get_by_label("Password", exact=True).fill(pwd)
+                        page.get_by_role("button", name="Log in").click()
+                        
+                        # Wait for redirect back
+                        page.wait_for_url(url, timeout=15000)
+                        self.log(LogLevel.INFO, "Login successful, returned to availability page.", task.id)
+                    except Exception as e:
+                        self.log(LogLevel.WARN, f"Pre-emptive login failed: {e}", task.id)
+
+                # 5. Find Slots
                 try:
                     page.wait_for_selector("a[href*='/slot/']", timeout=10000)
                 except TimeoutError:
@@ -74,46 +95,44 @@ class BookingBot:
                     self.update_task_last_checked(task)
                     return
                 
-                # 4. Filter Slots based on Preference
+                # Filter Slots based on Preference
                 target_slot = None
-                
                 if task.target_time_start:
                     self.log(LogLevel.INFO, f"Looking for slot starting at {task.target_time_start}...", task.id)
-                    # Iterate and check URL or text for time
-                    # URL format: .../slot/07:00-07:40/...
                     target_time_str = f"/slot/{task.target_time_start}"
-                    
                     for s in slots:
                         href = s.get_attribute("href")
                         if href and target_time_str in href:
                             target_slot = s
                             break
-                    
                     if not target_slot:
                         self.log(LogLevel.INFO, f"No slot found matching time {task.target_time_start}.", task.id)
                         self.update_task_last_checked(task)
                         return
                 else:
-                    # Pick first available
                     target_slot = slots[0]
 
-                # Attempt Booking
+                # Click Slot
                 self.log(LogLevel.INFO, "Clicking slot...", task.id)
                 target_slot.click()
                 
-                # 5. "Your Selection" Modal
+                # 6. "Your Selection" Modal & Booking
                 try:
                     # Court Selection Logic
                     book_btn = page.get_by_role("button", name="Book now")
                     
                     # Logic to switch court if full/disabled
                     def handle_full_court():
+                        # Wait a moment for button state to settle
+                        time.sleep(1)
                         if book_btn.is_disabled() or page.get_by_text("The session being booked is already full").is_visible():
                             self.log(LogLevel.INFO, "Default court full. Attempting to switch...", task.id)
+                            # Find "FULL" text to click
                             full_text = page.get_by_text("FULL -", exact=False).first
                             if full_text.is_visible():
                                 full_text.click()
                                 try:
+                                    # Select the last option
                                     page.get_by_role("listbox").get_by_role("option").last.click()
                                     self.log(LogLevel.INFO, "Switched court.", task.id)
                                     time.sleep(1)
@@ -126,14 +145,12 @@ class BookingBot:
                     self.log(LogLevel.ERROR, "Could not click 'Book now' (maybe disabled/court selection needed?)", task.id)
                     return
 
-                # 6. Login (If redirected)
+                # 7. Login Fallback (If pre-emptive failed)
                 if page.get_by_label("Email address or customer ID").is_visible():
-                    self.log(LogLevel.INFO, "Logging in...", task.id)
+                    self.log(LogLevel.INFO, "Logging in (fallback)...", task.id)
                     page.get_by_label("Email address or customer ID").fill(user.email)
-                    
                     pwd = decrypt_value(user.password_encrypted)
                     page.get_by_label("Password", exact=True).fill(pwd)
-                    
                     page.get_by_role("button", name="Log in").click()
                     
                     try:
@@ -144,7 +161,7 @@ class BookingBot:
                     except:
                         pass 
 
-                # 7. Checkout / Basket
+                # 8. Checkout / Basket
                 try:
                     page.wait_for_url("**/checkout", timeout=15000)
                 except:
@@ -153,45 +170,73 @@ class BookingBot:
 
                 self.log(LogLevel.INFO, "At Checkout. Filling billing details...", task.id)
                 
-                # 8. Fill Billing Details
-                page.get_by_label("Pay with a different card").check()
+                # 9. Fill Billing Details
+                try:
+                    # Robustly check 'Pay with a different card'
+                    saved_card = page.get_by_label("Pay with saved card")
+                    if saved_card.is_visible() and saved_card.is_checked():
+                        page.get_by_label("Pay with a different card").check()
+                    elif not saved_card.is_visible():
+                        diff_card = page.get_by_label("Pay with a different card")
+                        if diff_card.is_visible():
+                            diff_card.check()
+                except Exception as e:
+                    self.log(LogLevel.ERROR, f"Error selecting payment method: {e}", task.id)
+                    try: page.screenshot(path=f"/app/error_checkout_{task.id}.png")
+                    except: pass
+                    return 
                 
                 try:
                     page.get_by_label("First name").fill(user.name.split()[0]) 
                     page.get_by_label("Last name").fill(user.name.split()[-1] if len(user.name.split()) > 1 else "User")
-                    page.get_by_label("Address line 1").fill(payment.address_line_1)
+                    
+                    # Address Line 1 often lacks a proper label association
+                    try:
+                        page.get_by_label("Address line 1").fill(payment.address_line_1)
+                    except:
+                        # Fallback: Find input near text
+                        page.locator("div").filter(has_text="Address line 1").last.locator("input").first.fill(payment.address_line_1)
+
                     page.get_by_label("Town/city").fill(payment.city)
                     page.get_by_label("Postcode").fill(payment.postcode)
                 except Exception as e:
                     self.log(LogLevel.WARN, f"Error filling billing address: {e}", task.id)
+                    try: page.screenshot(path=f"/app/error_billing_{task.id}.png")
+                    except: pass
 
-                # 9. Opayo Iframe (Card Details)
+                # 10. Opayo Iframe (Card Details)
                 self.log(LogLevel.INFO, "Filling Card Details...", task.id)
                 
-                page.wait_for_selector("iframe[src*='opayo']", timeout=10000)
-                frame = None
-                for f in page.frames:
-                    if "opayo" in f.url:
-                        frame = f
-                        break
-                
-                if not frame:
-                    self.log(LogLevel.ERROR, "Could not find Payment Iframe.", task.id)
-                    return
-
                 try:
-                    frame.get_by_label("Name").fill(payment.cardholder_name)
+                    # Wait for iframe element and get content frame
+                    iframe_el = page.wait_for_selector("iframe[src*='opayo']", timeout=20000)
+                    frame = iframe_el.content_frame()
+                    if not frame:
+                        # Sometimes content_frame is null if cross-origin isn't ready? 
+                        # Try finding by url again as fallback
+                        time.sleep(2)
+                        for f in page.frames:
+                            if "opayo" in f.url:
+                                frame = f
+                                break
+                    
+                    if not frame:
+                        raise Exception("Could not find Opayo iframe content")
+
+                    frame.locator("input[name='cardholderName']").fill(payment.cardholder_name)
                     cn = decrypt_value(payment.card_number_encrypted)
-                    frame.get_by_label("Card").fill(cn)
+                    frame.locator("input[name='cardNumber']").fill(cn)
                     exp = f"{payment.expiry_month}{payment.expiry_year}"
-                    frame.get_by_label("Expiry").fill(exp)
+                    frame.locator("input[name='expiryDate']").fill(exp)
                     cvv = decrypt_value(payment.cvv_encrypted)
-                    frame.get_by_label("CVC").fill(cvv)
+                    frame.locator("input[name='securityCode']").fill(cvv)
                 except Exception as e:
                     self.log(LogLevel.ERROR, f"Error filling Iframe: {e}", task.id)
+                    try: page.screenshot(path=f"/app/error_iframe_{task.id}.png")
+                    except: pass
                     return
 
-                # 10. Finalize
+                # 11. Finalize
                 self.log(LogLevel.INFO, "Finalizing...", task.id)
                 page.get_by_label("I agree to the Terms and Conditions").check()
                 
@@ -207,7 +252,7 @@ class BookingBot:
 
                 pay_btn.click()
                 
-                # 11. Confirmation
+                # 12. Confirmation
                 try:
                     page.wait_for_url("**/confirmation", timeout=30000)
                     ref = "CONFIRMED" 
