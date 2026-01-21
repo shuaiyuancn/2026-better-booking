@@ -19,3 +19,6 @@ todos.db-wal
 
 .env.development.local
 .env
+
+# Screenshots / Errors
+*.png
