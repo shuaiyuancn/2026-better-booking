@@ -74,3 +74,5 @@ When asked to implement features:
 2.  **Edit on Host:** specific file paths `C:\workspace\...`.
 3.  **Run in Container:** Use `podman exec ...` for scripts/tests.
 4.  **Restart on Config Change:** If `pyproject.toml` or `.env` changes, restart the container.
+5.  **Documentation Sync:** Whenever updating code, you should also try to update the document, especially PRD and DESIGN.
+6.  **Git Ops:** Occasionally commit the work and push to GitHub, especially when a dedicated task is finished.

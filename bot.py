@@ -103,7 +103,25 @@ class BookingBot:
                 
                 # 5. "Your Selection" Modal
                 try:
-                    page.get_by_role("button", name="Book now").click()
+                    # Court Selection Logic
+                    book_btn = page.get_by_role("button", name="Book now")
+                    
+                    # Logic to switch court if full/disabled
+                    def handle_full_court():
+                        if book_btn.is_disabled() or page.get_by_text("The session being booked is already full").is_visible():
+                            self.log(LogLevel.INFO, "Default court full. Attempting to switch...", task.id)
+                            full_text = page.get_by_text("FULL -", exact=False).first
+                            if full_text.is_visible():
+                                full_text.click()
+                                try:
+                                    page.get_by_role("listbox").get_by_role("option").last.click()
+                                    self.log(LogLevel.INFO, "Switched court.", task.id)
+                                    time.sleep(1)
+                                except:
+                                    self.log(LogLevel.ERROR, "Failed to select alternative court.", task.id)
+
+                    handle_full_court()
+                    book_btn.click()
                 except TimeoutError:
                     self.log(LogLevel.ERROR, "Could not click 'Book now' (maybe disabled/court selection needed?)", task.id)
                     return
@@ -119,7 +137,10 @@ class BookingBot:
                     page.get_by_role("button", name="Log in").click()
                     
                     try:
-                        page.get_by_role("button", name="Book now").click(timeout=10000)
+                        # Re-check after login
+                        book_btn = page.get_by_role("button", name="Book now")
+                        handle_full_court()
+                        book_btn.click(timeout=10000)
                     except:
                         pass 
 
