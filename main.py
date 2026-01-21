@@ -3,7 +3,7 @@ from fastsql import Database
 import os
 from datetime import datetime, timedelta
 from cryptography.fernet import Fernet
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
@@ -123,7 +123,7 @@ class SystemLog:
     source: str
     message: str
     task_id: Optional[int] = None
-    timestamp: datetime = datetime.now()
+    timestamp: datetime = field(default_factory=datetime.now)
     id: Optional[int] = None
 
 # Create Tables

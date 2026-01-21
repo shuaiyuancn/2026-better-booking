@@ -22,3 +22,4 @@ todos.db-wal
 
 # Screenshots / Errors
 *.png
+screenshots/

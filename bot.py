@@ -12,6 +12,7 @@ logger = logging.getLogger("BookingBot")
 class BookingBot:
     def __init__(self, headless=True):
         self.headless = headless
+        os.makedirs("/app/screenshots", exist_ok=True)
 
     def log(self, level, message, task_id=None):
         print(f"[{level}] {message}")
@@ -37,14 +38,23 @@ class BookingBot:
         url = f"https://bookings.better.org.uk/location/{task.leisure_centre}/{duration_slug}/{task.target_date}/by-time"
         
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=self.headless)
-            context = browser.new_context()
+            # Use realistic User Agent to avoid blocking
+            browser = p.chromium.launch(
+                headless=self.headless,
+                args=["--disable-blink-features=AutomationControlled"]
+            )
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
             page = context.new_page()
-            
+
             try:
                 # 3. Check Availability
                 self.log(LogLevel.INFO, f"Checking URL: {url}", task.id)
                 page.goto(url)
+                
+                try: page.screenshot(path=f"/app/screenshots/step0_page_load_{task.id}.png", full_page=True)
+                except Exception as e: self.log(LogLevel.ERROR, f"Screenshot 0 failed: {e}", task.id)
                 
                 # Cookie Consent
                 try:
@@ -75,9 +85,14 @@ class BookingBot:
                         page.get_by_role("button", name="Log in").click()
                         
                         # Wait for redirect back
-                        page.wait_for_url(url, timeout=15000)
+                        page.wait_for_url(url, timeout=30000)
                         self.log(LogLevel.INFO, "Login successful, returned to availability page.", task.id)
+                        try: page.screenshot(path=f"/app/screenshots/step1_login_success_{task.id}.png", full_page=True)
+                        except Exception as e: self.log(LogLevel.ERROR, f"Screenshot 1 failed: {e}", task.id)
                     except Exception as e:
+                        try: page.screenshot(path=f"/app/screenshots/step1_login_failed_{task.id}.png", full_page=True)
+                        except Exception as e: self.log(LogLevel.ERROR, f"Screenshot 1 failed: {e}", task.id)
+
                         self.log(LogLevel.WARN, f"Pre-emptive login failed: {e}", task.id)
 
                 # 5. Find Slots
@@ -92,8 +107,15 @@ class BookingBot:
                 slots = page.locator("a[href*='/slot/']").all()
                 if not slots:
                     self.log(LogLevel.INFO, "No booking slots found.", task.id)
+                    
+                    try: page.screenshot(path=f"/app/screenshots/step2_slots_not_found_{task.id}.png", full_page=True)
+                    except Exception as e: self.log(LogLevel.ERROR, f"Screenshot 2 failed: {e}", task.id)
+                    
                     self.update_task_last_checked(task)
                     return
+                
+                try: page.screenshot(path=f"/app/screenshots/step2_slots_found_{task.id}.png", full_page=True)
+                except Exception as e: self.log(LogLevel.ERROR, f"Screenshot 2 failed: {e}", task.id)
                 
                 # Filter Slots based on Preference
                 target_slot = None
@@ -107,6 +129,10 @@ class BookingBot:
                             break
                     if not target_slot:
                         self.log(LogLevel.INFO, f"No slot found matching time {task.target_time_start}.", task.id)
+                        
+                        try: page.screenshot(path=f"/app/screenshots/step2_slots_not_found_{task.id}.png", full_page=True)
+                        except Exception as e: self.log(LogLevel.ERROR, f"Screenshot 2 failed: {e}", task.id)
+                        
                         self.update_task_last_checked(task)
                         return
                 else:
@@ -135,6 +161,8 @@ class BookingBot:
                                     # Select the last option
                                     page.get_by_role("listbox").get_by_role("option").last.click()
                                     self.log(LogLevel.INFO, "Switched court.", task.id)
+                                    try: page.screenshot(path=f"/app/screenshots/step2_handling_full_court_{task.id}.png", full_page=True)
+                                    except Exception as e: self.log(LogLevel.ERROR, f"Screenshot switch failed: {e}", task.id)
                                     time.sleep(1)
                                 except:
                                     self.log(LogLevel.ERROR, "Failed to select alternative court.", task.id)
@@ -156,6 +184,9 @@ class BookingBot:
                     try:
                         # Re-check after login
                         book_btn = page.get_by_role("button", name="Book now")
+                        try: page.screenshot(path=f"/app/screenshots/step1_login_fallback_success_{task.id}.png", full_page=True)
+                        except: pass
+
                         handle_full_court()
                         book_btn.click(timeout=10000)
                     except:
@@ -182,13 +213,13 @@ class BookingBot:
                             diff_card.check()
                 except Exception as e:
                     self.log(LogLevel.ERROR, f"Error selecting payment method: {e}", task.id)
-                    try: page.screenshot(path=f"/app/error_checkout_{task.id}.png")
+                    try: page.screenshot(path=f"/app/screenshots/error_checkout_{task.id}.png", full_page=True)
                     except: pass
                     return 
                 
                 try:
-                    page.get_by_label("First name").fill(user.name.split()[0]) 
-                    page.get_by_label("Last name").fill(user.name.split()[-1] if len(user.name.split()) > 1 else "User")
+                    page.get_by_label("First name").fill(payment.cardholder_name.split()[0]) 
+                    page.get_by_label("Last name").fill(payment.cardholder_name.split()[-1] if len(payment.cardholder_name.split()) > 1 else "")
                     
                     # Address Line 1 often lacks a proper label association
                     try:
@@ -201,7 +232,7 @@ class BookingBot:
                     page.get_by_label("Postcode").fill(payment.postcode)
                 except Exception as e:
                     self.log(LogLevel.WARN, f"Error filling billing address: {e}", task.id)
-                    try: page.screenshot(path=f"/app/error_billing_{task.id}.png")
+                    try: page.screenshot(path=f"/app/screenshots/error_billing_{task.id}.png", full_page=True)
                     except: pass
 
                 # 10. Opayo Iframe (Card Details)
@@ -210,6 +241,7 @@ class BookingBot:
                 try:
                     # Wait for iframe element and get content frame
                     iframe_el = page.wait_for_selector("iframe[src*='opayo']", timeout=20000)
+                    iframe_el.scroll_into_view_if_needed()
                     frame = iframe_el.content_frame()
                     if not frame:
                         # Sometimes content_frame is null if cross-origin isn't ready? 
@@ -223,16 +255,36 @@ class BookingBot:
                     if not frame:
                         raise Exception("Could not find Opayo iframe content")
 
-                    frame.locator("input[name='cardholderName']").fill(payment.cardholder_name)
+                    # Use placeholders as fallback if names fail
+                    try:
+                        frame.get_by_placeholder("Cardholder Name").fill(payment.cardholder_name)
+                    except:
+                        frame.locator("input[name='cardholderName']").fill(payment.cardholder_name)
+
                     cn = decrypt_value(payment.card_number_encrypted)
-                    frame.locator("input[name='cardNumber']").fill(cn)
+                    try:
+                        frame.get_by_placeholder("0000 0000 0000 0000").fill(cn)
+                    except:
+                         frame.locator("input[name='cardNumber']").fill(cn)
+
                     exp = f"{payment.expiry_month}{payment.expiry_year}"
-                    frame.locator("input[name='expiryDate']").fill(exp)
+                    try:
+                        frame.get_by_placeholder("MMYY").fill(exp)
+                    except:
+                        frame.locator("input[name='expiryDate']").fill(exp)
+
                     cvv = decrypt_value(payment.cvv_encrypted)
-                    frame.locator("input[name='securityCode']").fill(cvv)
+                    try:
+                        frame.get_by_placeholder("123").fill(cvv)
+                    except:
+                        frame.locator("input[name='securityCode']").fill(cvv)
+                        
+                    try: page.screenshot(path=f"/app/screenshots/step3_details_filled_{task.id}.png", full_page=True)
+                    except: pass
+
                 except Exception as e:
                     self.log(LogLevel.ERROR, f"Error filling Iframe: {e}", task.id)
-                    try: page.screenshot(path=f"/app/error_iframe_{task.id}.png")
+                    try: page.screenshot(path=f"/app/screenshots/error_iframe_{task.id}.png", full_page=True)
                     except: pass
                     return
 
@@ -250,6 +302,9 @@ class BookingBot:
                     self.log(LogLevel.ERROR, "Pay Now button is still disabled after filling.", task.id)
                     return
 
+                try: page.screenshot(path=f"/app/screenshots/step4_before_pay_{task.id}.png", full_page=True)
+                except: pass
+
                 pay_btn.click()
                 
                 # 12. Confirmation
@@ -266,9 +321,13 @@ class BookingBot:
                     
                     self.update_task_status(task, TaskStatus.SUCCESS)
                     self.log(LogLevel.INFO, "Booking Successful!", task.id)
+                    try: page.screenshot(path=f"/app/screenshots/step5_confirmation_{task.id}.png", full_page=True)
+                    except: pass
                     
                 except TimeoutError:
                     self.log(LogLevel.ERROR, "Timeout waiting for confirmation.", task.id)
+                    try: page.screenshot(path=f"/app/screenshots/error_confirmation_timeout_{task.id}.png", full_page=True)
+                    except Exception as e: self.log(LogLevel.ERROR, f"Screenshot confirmation timeout failed: {e}", task.id)
             
             except Exception as e:
                 self.log(LogLevel.ERROR, f"Unexpected error in bot run: {e}", task.id)
