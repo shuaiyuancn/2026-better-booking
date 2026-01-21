@@ -3,6 +3,7 @@ import time
 import logging
 from datetime import datetime
 from playwright.sync_api import sync_playwright, TimeoutError
+from playwright_stealth import Stealth
 from main import db, tasks, users, payments, bookings, logs, Task, TaskStatus, LogLevel, encrypt_value, decrypt_value, SystemLog, Booking
 
 # Configure Logging
@@ -13,6 +14,7 @@ class BookingBot:
     def __init__(self, headless=True):
         self.headless = headless
         os.makedirs("/app/screenshots", exist_ok=True)
+        os.makedirs("/app/videos", exist_ok=True)
 
     def log(self, level, message, task_id=None):
         print(f"[{level}] {message}")
@@ -44,9 +46,13 @@ class BookingBot:
                 args=["--disable-blink-features=AutomationControlled"]
             )
             context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                record_video_dir="/app/videos/",
+                record_video_size={"width": 1280, "height": 1440},
+                viewport={"width": 1280, "height": 1440}
             )
             page = context.new_page()
+            Stealth().apply_stealth_sync(page)
 
             try:
                 # 3. Check Availability
@@ -257,27 +263,27 @@ class BookingBot:
 
                     # Use placeholders as fallback if names fail
                     try:
-                        frame.get_by_placeholder("Cardholder Name").fill(payment.cardholder_name)
+                        frame.get_by_placeholder("Cardholder Name").press_sequentially(payment.cardholder_name, delay=100)
                     except:
-                        frame.locator("input[name='cardholderName']").fill(payment.cardholder_name)
+                        frame.locator("input[name='cardholderName']").press_sequentially(payment.cardholder_name, delay=100)
 
                     cn = decrypt_value(payment.card_number_encrypted)
                     try:
-                        frame.get_by_placeholder("0000 0000 0000 0000").fill(cn)
+                        frame.get_by_placeholder("0000 0000 0000 0000").press_sequentially(cn, delay=100)
                     except:
-                         frame.locator("input[name='cardNumber']").fill(cn)
+                         frame.locator("input[name='cardNumber']").press_sequentially(cn, delay=100)
 
                     exp = f"{payment.expiry_month}{payment.expiry_year}"
                     try:
-                        frame.get_by_placeholder("MMYY").fill(exp)
+                        frame.get_by_placeholder("MMYY").press_sequentially(exp, delay=100)
                     except:
-                        frame.locator("input[name='expiryDate']").fill(exp)
+                        frame.locator("input[name='expiryDate']").press_sequentially(exp, delay=100)
 
                     cvv = decrypt_value(payment.cvv_encrypted)
                     try:
-                        frame.get_by_placeholder("123").fill(cvv)
+                        frame.get_by_placeholder("123").press_sequentially(cvv, delay=100)
                     except:
-                        frame.locator("input[name='securityCode']").fill(cvv)
+                        frame.locator("input[name='securityCode']").press_sequentially(cvv, delay=100)
                         
                     try: page.screenshot(path=f"/app/screenshots/step3_details_filled_{task.id}.png", full_page=True)
                     except: pass
@@ -302,6 +308,7 @@ class BookingBot:
                     self.log(LogLevel.ERROR, "Pay Now button is still disabled after filling.", task.id)
                     return
 
+                time.sleep(1)
                 try: page.screenshot(path=f"/app/screenshots/step4_before_pay_{task.id}.png", full_page=True)
                 except: pass
 
@@ -331,6 +338,19 @@ class BookingBot:
             
             except Exception as e:
                 self.log(LogLevel.ERROR, f"Unexpected error in bot run: {e}", task.id)
+            finally:
+                try:
+                    page.close()
+                    context.close()
+                    # Rename video
+                    video_path = page.video.path()
+                    if video_path:
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        new_path = f"/app/videos/task_{task.id}_{timestamp}.webm"
+                        os.rename(video_path, new_path)
+                        self.log(LogLevel.INFO, f"Video saved to {new_path}", task.id)
+                except Exception as e:
+                    self.log(LogLevel.WARN, f"Failed to save video: {e}", task.id)
 
     def update_task_status(self, task, status):
         task.status = status.value

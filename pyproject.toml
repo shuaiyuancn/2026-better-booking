@@ -12,6 +12,7 @@ dependencies = [
     "fastsql>=2.1.1",
     "playwright==1.49.1",
     "cryptography>=46.0.3",
+    "playwright-stealth>=2.0.1",
 ]
 
 [dependency-groups]
